@@ -26,8 +26,8 @@ const SellPopup = (props: SellPopupProps) => {
     <CustomDialog
       open={open}
       onClose={onClose}
-      title="List NFT for Sale"
-      description="This will list the NFT for sale, you can cancel anytime."
+      title="List ESTATE for Sale"
+      description="This will list the ESTATE for sale, you can cancel anytime."
     >
       <div className="flex items-end">
         <div className="mr-2 flex flex-grow flex-col">

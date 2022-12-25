@@ -8,6 +8,7 @@ type AddressAvatarProps = {
 
 const AddressAvatar = ({ address }: AddressAvatarProps) => {
   const shortAddress = useMemo(() => minifyAddress(address), [address]);
+  const Address =  [address];
 
   return (
     <div className="flex h-10 items-center">

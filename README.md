@@ -1,4 +1,4 @@
-# NFT Marketplace Initial
+# Real Estate Market Initial
 
 This repo is the starting point of the Front-end section of this [Full-stack Ethereum Development course][course]
 

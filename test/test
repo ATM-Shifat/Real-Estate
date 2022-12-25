@@ -29,7 +29,7 @@ describe("Estate", function () {
             expect(mintedTokenURI).to.be.equal(tURI)
         })
 
-        it("Asserts newly created nfts owner is the one who initiated it", async () => {
+        it("Asserts newly created property owner is the one who initiated it", async () => {
             const _tokenId = await createEstate(tURI)
             const owner = await estate.ownerOf(_tokenId)
             const initiater = accounts[0]

@@ -3,7 +3,7 @@ import { readFileSync, unlinkSync } from "fs";
 import { NextApiHandler } from "next";
 import { File, NFTStorage } from "nft.storage";
 
-const client = new NFTStorage({ token: `${process.env.NFT_STORAGE_KEY}` });
+const client = new NFTStorage({ token: `${process.env.NFT_STORAGE_API_KEY}` });
 
 const handler: NextApiHandler = async (req, res) => {
   if (req.method != "POST") {
@@ -11,7 +11,7 @@ const handler: NextApiHandler = async (req, res) => {
   }
   try {
     // Parse req body and save image in /tmp
-    const data: any = await new Promise((res, rej) => {
+      const data: any = await new Promise((res, rej) => {
       const uploadDir = `${process.cwd()}/tmp`;
       const form = formidable({ multiples: true, uploadDir });
       form.parse(req, (err, fields, files) => {
