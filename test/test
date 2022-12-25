@@ -1,0 +1,388 @@
+const { ethers, getNamedAccounts } = require("hardhat")
+const { expect } = require("chai")
+const { getArgumentForSignature } = require("typechain")
+
+describe("Estate", function () {
+    let estate
+    let accounts
+    const tURI = "https://sometoken.uri"
+    let transaction
+    beforeEach(async function () {
+        const Estate = await ethers.getContractFactory("Estate")
+        estate = await Estate.deploy()
+        accounts = await ethers.getSigners()
+    })
+
+    const createEstate = async (tokenURI) => {
+        const transaction = await estate.realEstate(tokenURI)
+        const receipt = await transaction.wait()
+
+        const _tokenId = receipt.events[0].args.tokenId
+
+        return _tokenId
+    }
+
+    describe("estate creation", function () {
+        it("Asserts newly minted token URI is the same as the one we sent", async () => {
+            const _tokenId = await createEstate(tURI)
+            const mintedTokenURI = await estate.tokenURI(_tokenId)
+            expect(mintedTokenURI).to.be.equal(tURI)
+        })
+
+        it("Asserts newly created nfts owner is the one who initiated it", async () => {
+            const _tokenId = await createEstate(tURI)
+            const owner = await estate.ownerOf(_tokenId)
+            const initiater = accounts[0]
+            expect(initiater.address).to.be.equal(
+                await estate.ownerOf(_tokenId)
+            )
+        })
+
+        it("Creates estate with proper information", async () => {
+            const tURI = "something"
+            const transaction = await estate.realEstate(tURI)
+            const receipt = await transaction.wait()
+            const args = receipt.events[1].args
+            const initiater = accounts[0]
+            expect(initiater.address).to.be.equal(
+                await estate.ownerOf(args.tokenId)
+            )
+            expect(ethers.constants.AddressZero).to.be.equal(args.from)
+            expect(initiater.address).to.be.equal(args.to)
+            expect(tURI).to.be.equal(args.tokenURI)
+            expect(0).to.be.equal(args.price)
+        })
+    })
+
+    describe("estate listing", function () {
+        it("reverts if set price is less than or equal zero", async () => {
+            const tURI = "Some uri"
+            const _tokenId = await createEstate(tURI)
+            await expect(
+                estate.listEstate(_tokenId, 0)
+            ).to.be.revertedWithCustomError(estate, "Estate_PriceLessThanZero")
+        })
+        it("Checks if the owner is listing the estate", async () => {
+            const tURI = "Some uri on the go"
+            const _tokenId = await createEstate(tURI)
+            const attacker = accounts[3]
+            await expect(
+                estate.connect(attacker).listEstate(_tokenId, 2)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotOwner")
+        })
+
+        it("Checks if everything is working properly in the list function", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const _tokenId = await createEstate(tURI)
+            const transaction = await estate.listEstate(_tokenId, price)
+            const receipt = await transaction.wait()
+            const args = receipt.events[2].args
+
+            expect(accounts[0].address).to.be.equal(args.from)
+            expect(estate.address).to.be.equal(args.to)
+            expect("").to.be.equal(args.tokenURI)
+            expect(price).to.be.equal(args.price)
+        })
+    })
+    describe("On site inspector", function () {
+        it("reverts if the inspector is the seller", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const _tokenId = await createEstate(tURI)
+            const transaction = await estate.listEstate(_tokenId, price)
+            await transaction.wait()
+            await expect(
+                estate.inspect(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_Owner")
+        })
+
+        it("reverts if the property is not listed", async () => {
+            const _tokenId = 999
+            await expect(
+                estate.inspect(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotListed")
+        })
+
+        it("Checks if the inspected event has the right parameter", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const _tokenId = await createEstate(tURI)
+            await (await estate.listEstate(_tokenId, price)).wait()
+
+            const inspecter = accounts[2]
+            const transaction = await estate
+                .connect(inspecter)
+                .inspect(_tokenId)
+            const receipt = await transaction.wait()
+            const args = receipt.events[0].args
+
+            expect(estate.address).to.be.equal(args.from)
+            expect(estate.address).to.be.equal(args.to)
+            expect("").to.be.equal(args.tokenURI)
+            expect(0).to.be.equal(args.price)
+        })
+    })
+
+    describe("Estate buy function", function () {
+        it("reverts if the property is not listed", async () => {
+            const _tokenId = 999
+            await expect(
+                estate.buyEstate(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotListed")
+        })
+        it("reverts if the property is not inspected", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const _tokenId = await createEstate(tURI)
+            const transaction = await estate.listEstate(_tokenId, price)
+
+            await expect(
+                estate.buyEstate(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotInspected")
+        })
+
+        it("reverts if the price is not met", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            const transaction = await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+            await expect(
+                estate.buyEstate(_tokenId, { value: 5 })
+            ).to.be.revertedWithCustomError(estate, "Estate_PriceNotMet")
+        })
+
+        it("Checks if the seller got the profit", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+
+            const sellerProfit = Math.floor((price * 97) / 100)
+            const fee = price - sellerProfit
+
+            await new Promise((r) => setTimeout(r, 100))
+
+            const oldOwnerBalance = await accounts[0].getBalance()
+
+            const transaction = await estate
+                .connect(accounts[1])
+                .buyEstate(_tokenId, { value: price })
+            const receipt = await transaction.wait()
+
+            await new Promise((r) => setTimeout(r, 100))
+            const newOwnerBalance = await accounts[0].getBalance()
+
+            const diff = newOwnerBalance.sub(oldOwnerBalance)
+
+            expect(diff).to.be.equal(sellerProfit)
+        })
+
+        it("Checks if the contract got its fee", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+
+            const sellerProfit = Math.floor((price * 97) / 100)
+            const fee = price - sellerProfit
+
+            await new Promise((r) => setTimeout(r, 100))
+
+            const oldContractBalance = await estate.provider.getBalance(
+                estate.address
+            )
+
+            const transaction = await estate
+                .connect(accounts[1])
+                .buyEstate(_tokenId, { value: price })
+            const receipt = await transaction.wait()
+
+            await new Promise((r) => setTimeout(r, 100))
+
+            const newContractBalance = await estate.provider.getBalance(
+                estate.address
+            )
+
+            const diff = newContractBalance.sub(oldContractBalance)
+
+            expect(diff).to.be.equal(fee)
+        })
+
+        it("Confirms the ownership transfer", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+
+            const transaction = await estate
+                .connect(accounts[1])
+                .buyEstate(_tokenId, { value: price })
+            const receipt = await transaction.wait()
+
+            expect(await estate.ownerOf(_tokenId)).to.be.equal(
+                accounts[1].address
+            )
+        })
+
+        it("Confirms if the ItemBought event has right parameter", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+
+            const transaction = await estate
+                .connect(accounts[1])
+                .buyEstate(_tokenId, { value: price })
+            const receipt = await transaction.wait()
+
+            const args = receipt.events[1].args
+
+            expect(estate.address).to.be.equal(args.from)
+            expect(accounts[1].address).to.be.equal(args.to)
+            expect("").to.be.equal(args.tokenURI)
+            expect(price).to.be.equal(args.price)
+        })
+    })
+
+    describe("Cancel Listing", function () {
+        it("reverts if the property is not listed", async () => {
+            const _tokenId = 999
+            await expect(
+                estate.cancelListing(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotListed")
+        })
+
+        it("reverts if the cancelor is no the property owner", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const _tokenId = await createEstate(tURI)
+            const transaction = await estate.listEstate(_tokenId, price)
+
+            await expect(
+                estate.connect(accounts[1]).cancelListing(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotOwner")
+        })
+
+        it("Confirms  return of ownership of the property", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const owner = accounts[0]
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const transaction = await estate
+                .connect(owner)
+                .cancelListing(_tokenId)
+            await transaction.wait()
+
+            expect(await estate.ownerOf(_tokenId)).to.be.equal(owner.address)
+        })
+
+        it("prevents buying canceled estate", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            await estate.connect(accounts[0]).cancelListing(_tokenId)
+            await expect(
+                estate.buyEstate(_tokenId)
+            ).to.be.revertedWithCustomError(estate, "Estate_NotListed")
+        })
+
+        it("Confirms the ItemCanceled event has right parameter", async () => {
+            const tURI = "Some uri on the go"
+            const price = 2
+            const owner = accounts[0]
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const transaction = await estate
+                .connect(owner)
+                .cancelListing(_tokenId)
+            const receipt = await transaction.wait()
+            const args = receipt.events[1].args
+
+            expect(estate.address).to.be.equal(args.from)
+            expect(owner.address).to.be.equal(args.to)
+            expect("").to.be.equal(args.tokenURI)
+            expect(0).to.be.equal(args.price)
+        })
+    })
+
+    describe("Witdraw funds to the contract owner", function () {
+        it("reverts if anyone other than the contract owner attempts to withdraw fund", async () => {
+            const attacker = accounts[3]
+
+            await expect(
+                estate.connect(attacker).withdrawFund()
+            ).to.be.revertedWith("Ownable: caller is not the owner")
+        })
+
+        it("Reverts the transaction if the balance is zero", async () => {
+            await expect(estate.withdrawFund()).to.be.revertedWith(
+                "Balance is zero"
+            )
+        })
+
+        it("Verifies the fund transfer to the owner", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+            await estate
+                .connect(accounts[1])
+                .buyEstate(_tokenId, { value: price })
+
+            const contractBalance = await estate.provider.getBalance(
+                estate.address
+            )
+
+            const oldContractOwnerBalance = await accounts[0].getBalance()
+            const transaction = await estate.withdrawFund()
+            const receipt = await transaction.wait()
+            await new Promise((r) => setTimeout(r, 100))
+
+            const newContractOwnerBalance = await accounts[0].getBalance()
+            const gasCost = receipt.gasUsed.mul(receipt.effectiveGasPrice)
+
+            expect(newContractOwnerBalance.add(gasCost).toString()).to.be.equal(
+                oldContractOwnerBalance.add(contractBalance).toString()
+            )
+        })
+
+        it("Confirms the Withdraw event has right parameter", async () => {
+            const tURI = "Some uri on the go"
+            const price = 20
+            const _tokenId = await createEstate(tURI)
+            await estate.listEstate(_tokenId, price)
+            const inspecter = accounts[1]
+            await estate.connect(inspecter).inspect(_tokenId)
+
+            await estate
+                .connect(accounts[1])
+                .buyEstate(_tokenId, { value: price })
+
+            const contractBalance = await estate.provider.getBalance(
+                estate.address
+            )
+            const transaction = await estate.withdrawFund()
+            const receipt = await transaction.wait()
+            const args = receipt.events[0].args
+            expect(args.contractOwner).to.be.equal(accounts[0].address)
+            expect(args.balance.toString()).to.be.equal(
+                contractBalance.toString()
+            )
+        })
+    })
+})
